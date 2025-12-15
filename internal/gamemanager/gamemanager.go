@@ -7,14 +7,14 @@ import (
 )
 
 type GameManager struct {
-	games []Game
+	games []*Game
 	pendingUser *websocket.Conn
 	users []*websocket.Conn
 }
 
 func NewGameManager() *GameManager {
 	return &GameManager{
-		games: []Game{},
+		games: []*Game{},
 		pendingUser: nil,
 		users: []*websocket.Conn{},
 	}
@@ -37,8 +37,9 @@ func (gm *GameManager) AddHandler(conn *websocket.Conn) {
 			break
 		}
 		
-		var message Message
+		var message IncomingMessage
 		if err := json.Unmarshal(rawMsg, &message); err != nil {
+			conn.WriteJSON(OutgoingError{Type: ERROR, Message: "invalid message format"})
 			continue
 		}
 		
@@ -46,10 +47,15 @@ func (gm *GameManager) AddHandler(conn *websocket.Conn) {
 		case INIT_GAME:
 			if gm.pendingUser != nil {
 				game := StartNewGame(gm.pendingUser, conn)
-				gm.games = append(gm.games, *game)
+				gm.games = append(gm.games, game)
 				gm.pendingUser = nil
 			} else {
 				gm.pendingUser = conn
+			}
+		case MOVE:
+			game := findGameByConn(gm.games, conn)
+			if game != nil {
+				game.MakeMove(conn, message.Move)
 			}
 		}
 	}
@@ -64,3 +70,13 @@ func filterOutConn(conns []*websocket.Conn, target *websocket.Conn) []*websocket
 	}
 	return result
 }
+
+func findGameByConn(games []*Game, conn *websocket.Conn) *Game {
+	for _, game := range games {
+		if game.white == conn || game.black == conn {
+			return game
+		}
+	}
+	return nil
+}
+	

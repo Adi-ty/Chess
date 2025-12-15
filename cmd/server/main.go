@@ -13,6 +13,7 @@ var upgrader = websocket.Upgrader{
 		return true
 	},
 }
+var gm = gamemanager.NewGameManager()
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -27,9 +28,10 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 func handleConnection(conn *websocket.Conn) {
 	defer conn.Close()
 
-	gamemanager := gamemanager.NewGameManager()
-	gamemanager.AddUser(conn)
-	defer gamemanager.RemoveUser(conn)
+	gm.AddUser(conn)
+	defer gm.RemoveUser(conn)
+
+	gm.AddHandler(conn)
 }
 
 func main() {
