@@ -30,8 +30,6 @@ func handleConnection(conn *websocket.Conn) {
 
 	gm.AddUser(conn)
 	defer gm.RemoveUser(conn)
-
-	gm.AddHandler(conn)
 }
 
 func main() {

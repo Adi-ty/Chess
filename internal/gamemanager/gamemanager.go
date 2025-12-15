@@ -22,6 +22,7 @@ func NewGameManager() *GameManager {
 
 func (gm *GameManager) AddUser(conn *websocket.Conn) {
 	gm.users = append(gm.users, conn)
+	gm.AddHandler(conn)
 }
 
 func (gm *GameManager) RemoveUser(conn *websocket.Conn) {
@@ -55,7 +56,10 @@ func (gm *GameManager) AddHandler(conn *websocket.Conn) {
 		case MOVE:
 			game := findGameByConn(gm.games, conn)
 			if game != nil {
-				game.MakeMove(conn, message.Move)
+				err := game.MakeMove(conn, message.Move)
+				if err != nil {
+					conn.WriteJSON(OutgoingError{Type: ERROR, Message: err.Error()})
+				}
 			}
 		}
 	}
