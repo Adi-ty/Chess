@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/notnil/chess"
 )
@@ -38,7 +39,7 @@ type Game struct {
 
 func StartNewGame(player1, player2 *websocket.Conn) *Game {
 	game := &Game{
-		ID:        generateGameID(),
+		ID:        uuid.New().String(),
 		white:     player1,
 		black:     player2,
 		board:     chess.NewGame(),
@@ -166,18 +167,3 @@ func (g *Game) safeSend(conn *websocket.Conn, msg interface{}) {
 	}()
 	conn.WriteJSON(msg)
 }
-
-func generateGameID() string {
-	return time.Now().Format("20060102150405") + "-" + randomString(8)
-}
-
-func randomString(n int) string {
-	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letters[time.Now().UnixNano()%int64(len(letters))]
-		time.Sleep(1) // Ensure different seed
-	}
-	return string(b)
-}
-
