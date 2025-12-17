@@ -84,12 +84,12 @@ func (g *Game) MakeMove(player *websocket.Conn, move string) error {
 		return ErrInvalidMove
 	}
 
-	var opponent *websocket.Conn
-	if player == g.white {
-		opponent = g.black
-	} else {
-		opponent = g.white
-	}
+	// var opponent *websocket.Conn
+	// if player == g.white {
+	// 	opponent = g.black
+	// } else {
+	// 	opponent = g.white
+	// }
 
 	outcome := g.board.Outcome()
 	if outcome != chess.NoOutcome {
@@ -108,7 +108,8 @@ func (g *Game) MakeMove(player *websocket.Conn, move string) error {
 	}
 
 	moveMsg := OutgoingMove{Type: MOVE, Move: move}
-	g.safeSend(opponent, moveMsg)
+	g.safeSend(g.white, moveMsg)
+	g.safeSend(g.black, moveMsg)
 
 	return nil
 }
