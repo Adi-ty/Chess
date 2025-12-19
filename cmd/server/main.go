@@ -14,6 +14,7 @@ func main() {
 		fmt.Println("Error initializing application:", err)
 		return
 	}
+	app.Logger.Println("Server Started")
 
 	mux := routes.SetUpRoutes(app)
 
@@ -21,7 +22,6 @@ func main() {
 		Addr: ":8080",
 		Handler: mux,
 	}
-	fmt.Println("Server started on :8080")
 	err = server.ListenAndServe()
 	if err != nil {
 		fmt.Println("Error starting server:", err)
