@@ -15,8 +15,10 @@ import (
 
 type Application struct {
 	Logger *log.Logger
+	Config *config.Config
 	AuthHandler *api.AuthHandler
 	WebSocketHandler *api.WebSocketHandler
+	JWTService       *auth.JWTService
 	DB *sql.DB
 }
 
@@ -51,12 +53,14 @@ func NewApplication() (*Application, error) {
 
 	// Handlers
 	authHandler := api.NewAuthHandler(logger, googleOauth, jwtService, userStore)
-	websocketHandler := api.NewWebSocketHandler(logger, gm)
+	websocketHandler := api.NewWebSocketHandler(logger, gm, jwtService)
 
 	app := &Application{
 		Logger: logger,
+		Config: cfg,
 		AuthHandler: authHandler,
 		WebSocketHandler: websocketHandler,
+		JWTService: jwtService,
 		DB: pgDB,
 	}
 

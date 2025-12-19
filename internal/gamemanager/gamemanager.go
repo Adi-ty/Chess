@@ -13,6 +13,10 @@ type GameManager struct {
 	playerGames map[*websocket.Conn]*Game
 	pendingUser *websocket.Conn
 	users       map[*websocket.Conn]bool
+
+	connToUser  map[*websocket.Conn]string
+    userToConn  map[string]*websocket.Conn
+
 	mu          sync.RWMutex
 }
 
@@ -22,12 +26,24 @@ func NewGameManager() *GameManager {
 		playerGames: make(map[*websocket.Conn]*Game),
 		pendingUser: nil,
 		users:       make(map[*websocket.Conn]bool),
+		connToUser:  make(map[*websocket.Conn]string),
+        userToConn:  make(map[string]*websocket.Conn),
 	}
 }
 
-func (gm *GameManager) AddUser(conn *websocket.Conn) {
+func (gm *GameManager) AddUser(conn *websocket.Conn, userID string) {
 	gm.mu.Lock()
 	gm.users[conn] = true
+
+	if userID != "" {
+        if oldConn, exists := gm.userToConn[userID]; exists && oldConn != conn {
+            delete(gm.connToUser, oldConn)
+            delete(gm.users, oldConn)
+        }
+        
+        gm.connToUser[conn] = userID
+        gm.userToConn[userID] = conn
+    }
 	gm.mu.Unlock()
 
 	gm.AddHandler(conn)
@@ -36,6 +52,11 @@ func (gm *GameManager) AddUser(conn *websocket.Conn) {
 func (gm *GameManager) RemoveUser(conn *websocket.Conn) {
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
+
+	if userID, exists := gm.connToUser[conn]; exists {
+        delete(gm.userToConn, userID)
+        delete(gm.connToUser, conn)
+    }
 
 	delete(gm.users, conn)
 
@@ -124,7 +145,10 @@ func (gm *GameManager) handleInitGame(conn *websocket.Conn) {
 		opponent := gm.pendingUser
 		gm.pendingUser = nil
 
-		game := StartNewGame(opponent, conn)
+		whiteUserID := gm.connToUser[opponent]
+        blackUserID := gm.connToUser[conn]
+
+		game := StartNewGame(opponent, conn, whiteUserID, blackUserID)
 		gm.games[game.ID] = game
 		gm.playerGames[opponent] = game
 		gm.playerGames[conn] = game

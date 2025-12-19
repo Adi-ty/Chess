@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Adi-ty/chess/internal/app"
+	"github.com/Adi-ty/chess/internal/auth"
 	"github.com/Adi-ty/chess/internal/routes"
 )
 
@@ -17,10 +18,11 @@ func main() {
 	app.Logger.Println("Server Started")
 
 	mux := routes.SetUpRoutes(app)
+	handler := auth.CORSMiddleware(mux)
 
 	server := &http.Server{
 		Addr: ":8080",
-		Handler: mux,
+		Handler: handler,
 	}
 	err = server.ListenAndServe()
 	if err != nil {

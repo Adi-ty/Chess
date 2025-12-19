@@ -10,6 +10,9 @@ func SetUpRoutes(app *app.Application) *http.ServeMux {
 	router := http.NewServeMux()
 
 	router.HandleFunc("/ws", app.WebSocketHandler.WsHandler)
+	router.HandleFunc("GET /auth/google", app.AuthHandler.HandleGoogleLogin)
+    router.HandleFunc("GET /auth/google/callback", app.AuthHandler.HandleGoogleCallback)
+	router.HandleFunc("POST /auth/logout", app.AuthHandler.HandleLogout)
 
 	return router
 }

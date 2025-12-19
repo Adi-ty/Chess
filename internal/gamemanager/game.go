@@ -30,6 +30,8 @@ type Game struct {
 	ID        string
 	white     *websocket.Conn
 	black     *websocket.Conn
+	whiteUserID string
+	blackUserID string
 	board     *chess.Game
 	status    GameStatus
 	startTime time.Time
@@ -37,11 +39,13 @@ type Game struct {
 	mu        sync.RWMutex
 }
 
-func StartNewGame(player1, player2 *websocket.Conn) *Game {
+func StartNewGame(player1, player2 *websocket.Conn, whiteUserID, blackUserID string) *Game {
 	game := &Game{
 		ID:        uuid.New().String(),
 		white:     player1,
 		black:     player2,
+		whiteUserID: whiteUserID,
+		blackUserID: blackUserID,
 		board:     chess.NewGame(),
 		status:    GameStatusInProgress,
 		startTime: time.Now(),
