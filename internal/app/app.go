@@ -36,6 +36,10 @@ func NewApplication() (*Application, error) {
 
 	cfg := config.LoadConfig()
 
+	// Stores
+	userStore := store.NewPostgresUserStore(pgDB)
+
+	// Services
 	gm := gamemanager.NewGameManager()
 
 	jwtService := auth.NewJWTService(cfg.JWTSecret)
@@ -46,7 +50,7 @@ func NewApplication() (*Application, error) {
 	})
 
 	// Handlers
-	authHandler := api.NewAuthHandler(logger, googleOauth, jwtService)
+	authHandler := api.NewAuthHandler(logger, googleOauth, jwtService, userStore)
 	websocketHandler := api.NewWebSocketHandler(logger, gm)
 
 	app := &Application{
