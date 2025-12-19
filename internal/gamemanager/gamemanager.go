@@ -141,26 +141,39 @@ func (gm *GameManager) handleInitGame(conn *websocket.Conn) {
 		}
 	}
 
+	currentUserID := gm.connToUser[conn]
+
 	if gm.pendingUser != nil {
+		pendingUserID := gm.connToUser[gm.pendingUser]
+
+		// Prevent same user from playing against themselves
+		if currentUserID != "" && pendingUserID != "" && currentUserID == pendingUserID {
+			conn.WriteJSON(OutgoingError{
+				Type:    ERROR,
+				Message: "you cannot play against yourself",
+			})
+			return
+		}
+
 		opponent := gm.pendingUser
 		gm.pendingUser = nil
 
 		whiteUserID := gm.connToUser[opponent]
-        blackUserID := gm.connToUser[conn]
+		blackUserID := gm.connToUser[conn]
 
 		game := StartNewGame(opponent, conn, whiteUserID, blackUserID)
 		gm.games[game.ID] = game
 		gm.playerGames[opponent] = game
 		gm.playerGames[conn] = game
 
-		log.Printf("Game started: %s", game.ID)
+		log.Printf("Game started: %s (white: %s, black: %s)", game.ID, whiteUserID, blackUserID)
 	} else {
 		gm.pendingUser = conn
 		conn.WriteJSON(map[string]string{
 			"type":    "waiting",
 			"message": "waiting for opponent",
 		})
-		log.Printf("Player waiting for opponent")
+		log.Printf("Player %s waiting for opponent", currentUserID)
 	}
 }
 
