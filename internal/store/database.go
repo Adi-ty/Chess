@@ -19,6 +19,9 @@ func Open() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	db.SetMaxOpenConns(25)
+    db.SetMaxIdleConns(5)
+
 	fmt.Println("Database connection established successfully")
 	return db, nil
 }
