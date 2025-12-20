@@ -117,7 +117,29 @@ func (h *AuthHandler) HandleGoogleCallback(w http.ResponseWriter, r *http.Reques
         SameSite: http.SameSiteLaxMode,
     })
 
-	http.Redirect(w, r, "http://localhost:5173/auth/callback?token="+token, http.StatusTemporaryRedirect)
+	http.Redirect(w, r, "http://localhost:3000/auth/callback?token="+token, http.StatusTemporaryRedirect)
+}
+
+func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
+	userCtx := auth.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	user, err := h.userStore.GetUserByID(r.Context(), userCtx.UserID)
+	if err != nil {
+		h.logger.Printf("Failed to get user: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "user not found"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
 }
 
 func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
