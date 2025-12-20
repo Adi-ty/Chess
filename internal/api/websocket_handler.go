@@ -38,7 +38,6 @@ func (h *WebSocketHandler) WsHandler(w http.ResponseWriter, r *http.Request) {
         }
     }
 
-	
 	claims, err := h.jwtService.ValidateToken(tokenString)
 	if err != nil {
 		h.logger.Printf("Invalid token: %v", err)
@@ -46,6 +45,12 @@ func (h *WebSocketHandler) WsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := claims.UserID
+
+	if err := h.gamemanager.CanUserConnect(userID); err != nil {
+		h.logger.Printf("User %s cannot connect: %v", userID, err)
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 
     conn, err := upgrader.Upgrade(w, r, nil)
     if err != nil {

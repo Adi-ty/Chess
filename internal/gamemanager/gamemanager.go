@@ -2,6 +2,7 @@ package gamemanager
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"sync"
 
@@ -31,14 +32,41 @@ func NewGameManager() *GameManager {
 	}
 }
 
+func (gm *GameManager) CanUserConnect(userID string) error {
+    gm.mu.RLock()
+    defer gm.mu.RUnlock()
+
+    if userID == "" {
+        return errors.New("authentication required")
+    }
+
+    if existingConn, exists := gm.userToConn[userID]; exists {
+        if game, inGame := gm.playerGames[existingConn]; inGame && game.IsActive() {
+            return errors.New("user is already in an active game")
+        }
+        return errors.New("user already has an active connection")
+    }
+
+    return nil
+}
+
 func (gm *GameManager) AddUser(conn *websocket.Conn, userID string) {
 	gm.mu.Lock()
 	gm.users[conn] = true
 
 	if userID != "" {
         if oldConn, exists := gm.userToConn[userID]; exists && oldConn != conn {
+			if game, inGame := gm.playerGames[oldConn]; !inGame || !game.IsActive() {
+				if gm.pendingUser == oldConn {
+					gm.pendingUser = nil
+					log.Printf("Cleared pending user due to reconnection: %s", userID)
+				}
+			}
+			
+
             delete(gm.connToUser, oldConn)
             delete(gm.users, oldConn)
+			oldConn.Close()
         }
         
         gm.connToUser[conn] = userID
@@ -54,7 +82,9 @@ func (gm *GameManager) RemoveUser(conn *websocket.Conn) {
 	defer gm.mu.Unlock()
 
 	if userID, exists := gm.connToUser[conn]; exists {
-        delete(gm.userToConn, userID)
+       	if gm.userToConn[userID] == conn {
+            delete(gm.userToConn, userID)
+        }
         delete(gm.connToUser, conn)
     }
 
