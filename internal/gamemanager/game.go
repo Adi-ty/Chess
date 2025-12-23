@@ -51,6 +51,7 @@ func StartNewGame(whiteUserID, blackUserID string) *Game {
 		board:     chess.NewGame(),
 		status:    GameStatusInProgress,
 		startTime: time.Now(),
+		disconnected: make(map[string]time.Time),
 	}
 }
 
@@ -143,6 +144,13 @@ func (g *Game) HandleDisconnect(userID string, gm *GameManager) {
 			
 			g.safeSend(gm.sessions[g.WhiteUserID].Conn, abandonMsg)
 			g.safeSend(gm.sessions[g.BlackUserID].Conn, abandonMsg)
+
+			if whiteSess, exists := gm.sessions[g.WhiteUserID]; exists {
+                whiteSess.GameID = ""
+            }
+            if blackSess, exists := gm.sessions[g.BlackUserID]; exists {
+                blackSess.GameID = ""
+            }
 		}
 	}()
 }
