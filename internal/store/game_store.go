@@ -15,7 +15,7 @@ type Game struct {
 	Outcome string `json:"outcome,omitempty"`
 	Method string `json:"method,omitempty"`
 	StartedAt string `json:"started_at"`
-	EndedAt string `json:"ended_at,omitempty"`
+	EndedAt sql.NullString `json:"ended_at,omitempty"`
 }
 
 type GameStore interface {
@@ -49,7 +49,7 @@ func (s *PostgresGameStore) CreateGame(ctx context.Context, game *Game) (*Game, 
 		game.BlackUserID,
 		game.Status,
 		game.StartedAt,
-		sql.NullString{String: game.EndedAt, Valid: game.EndedAt != ""},
+		game.EndedAt,
 	).Scan(&g.ID, &g.WhiteUserID, &g.BlackUserID, &g.Status, &g.StartedAt, &g.EndedAt)
 	
 	if err != nil {

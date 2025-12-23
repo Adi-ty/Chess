@@ -67,6 +67,20 @@ func (gm *GameManager) AddUser(conn *websocket.Conn, userID string) {
 	session.LastSeen = time.Now()
 
 	if session.GameID != "" {
+		// if game, exists := gm.games[session.GameID]; exists && game.IsActive() {
+        //     // Game is in memory, no need to fetch/replay
+		// 	game.mu.RLock()
+        //     boardState := game.board.Position().Board().String()
+        //     game.mu.RUnlock()
+        //     session.Conn.WriteJSON(map[string]interface{}{
+        //         "type": "board_state",
+        //         "board": boardState,
+        //         "game_id": game.ID,
+        //     })
+        //     go gm.AddHandler(session)
+        //     return
+        // }
+
 		dbGame, err := gm.gameStore.GetGameByUserID(context.Background(), userID)
 		if err != nil {
 			log.Printf("Failed to fetch game from store: %v", err)
@@ -82,21 +96,30 @@ func (gm *GameManager) AddUser(conn *websocket.Conn, userID string) {
                 disconnected: make(map[string]time.Time),
             }
 			gm.games[dbGame.ID] = game
-			session.GameID = dbGame.ID
+			gm.sessions[game.WhiteUserID].GameID = game.ID
+            gm.sessions[game.BlackUserID].GameID = game.ID
 
 			// Replay moves
 			moves, err := gm.gameStore.GetMovesByGameID(context.Background(), dbGame.ID)
-			if len (moves) > 0 {
-				gm.sessions[game.WhiteUserID].GameID = game.ID
-				gm.sessions[game.BlackUserID].GameID = game.ID
-				gm.sessions[game.WhiteUserID].Conn.WriteJSON(map[string]interface{}{"type": "board_replay", "moves": moves})
-				gm.sessions[game.BlackUserID].Conn.WriteJSON(map[string]interface{}{"type": "board_replay", "moves": moves})
-			}
 			if err != nil {
                 log.Printf("Error fetching moves for game %s: %v", dbGame.ID, err)
-            } else {
+            } else if len(moves) > 0 {
+				if whiteSess, exists := gm.sessions[game.WhiteUserID]; exists && whiteSess.Conn != nil {
+                    whiteSess.Conn.WriteJSON(map[string]interface{}{"type": "board_replay", "moves": moves})
+                }
+                if blackSess, exists := gm.sessions[game.BlackUserID]; exists && blackSess.Conn != nil {
+                    blackSess.Conn.WriteJSON(map[string]interface{}{"type": "board_replay", "moves": moves})
+                }
+
                 for _, move := range moves {
-                    if err := game.board.MoveStr(move.Move); err != nil {
+					mv, err := chess.UCINotation{}.Decode(game.board.Position(), move.Move)
+					if err != nil {
+						session.Conn.WriteJSON(OutgoingError{Type: ERROR, Message: "failed to restore game"})
+						log.Printf("Error decoding move %s: %v", move.Move, err)
+						return
+					}
+					
+                    if err := game.board.Move(mv); err != nil {
                         log.Printf("Error replaying move %s: %v", move.Move, err)
 						session.Conn.WriteJSON(OutgoingError{Type: ERROR, Message: "failed to restore game"})
 						return
