@@ -5,18 +5,16 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 type GameManager struct {
 	games       map[string]*Game
-	playerGames map[*websocket.Conn]*Game
-	pendingUser *websocket.Conn
-	users       map[*websocket.Conn]bool
+	sessions    map[string]*PlayerSession
 
-	connToUser  map[*websocket.Conn]string
-    userToConn  map[string]*websocket.Conn
+	pendingUser string
 
 	mu          sync.RWMutex
 }
@@ -24,11 +22,7 @@ type GameManager struct {
 func NewGameManager() *GameManager {
 	return &GameManager{
 		games:       make(map[string]*Game),
-		playerGames: make(map[*websocket.Conn]*Game),
-		pendingUser: nil,
-		users:       make(map[*websocket.Conn]bool),
-		connToUser:  make(map[*websocket.Conn]string),
-        userToConn:  make(map[string]*websocket.Conn),
+		sessions:    make(map[string]*PlayerSession),
 	}
 }
 
@@ -40,81 +34,80 @@ func (gm *GameManager) CanUserConnect(userID string) error {
         return errors.New("authentication required")
     }
 
-    if existingConn, exists := gm.userToConn[userID]; exists {
-        if game, inGame := gm.playerGames[existingConn]; inGame && game.IsActive() {
-            return errors.New("user is already in an active game")
-        }
-        return errors.New("user already has an active connection")
-    }
-
     return nil
 }
 
 func (gm *GameManager) AddUser(conn *websocket.Conn, userID string) {
 	gm.mu.Lock()
-	gm.users[conn] = true
+	defer gm.mu.Unlock()
 
-	if userID != "" {
-        if oldConn, exists := gm.userToConn[userID]; exists && oldConn != conn {
-			if game, inGame := gm.playerGames[oldConn]; !inGame || !game.IsActive() {
-				if gm.pendingUser == oldConn {
-					gm.pendingUser = nil
-					log.Printf("Cleared pending user due to reconnection: %s", userID)
-				}
-			}
-			
+	session, exists := gm.sessions[userID]
+	if !exists {
+		session = &PlayerSession{
+			UserID: userID,
+		}
+		gm.sessions[userID] = session
+	}
 
-            delete(gm.connToUser, oldConn)
-            delete(gm.users, oldConn)
-			oldConn.Close()
-        }
-        
-        gm.connToUser[conn] = userID
-        gm.userToConn[userID] = conn
-    }
-	gm.mu.Unlock()
+	if session.Conn != nil && session.Conn != conn {
+		session.Conn.Close()
+	}
 
-	gm.AddHandler(conn)
+	session.Conn = conn
+	session.Disconnected = false
+	session.LastSeen = time.Now()
+
+	if session.GameID != "" {
+		if game, exists := gm.games[session.GameID]; !exists || !game.IsActive() {
+			session.GameID = ""
+		}
+	}
+
+	go gm.AddHandler(session)
 }
 
-func (gm *GameManager) RemoveUser(conn *websocket.Conn) {
+func (gm *GameManager) RemoveUser(userID string) {
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
 
-	if userID, exists := gm.connToUser[conn]; exists {
-       	if gm.userToConn[userID] == conn {
-            delete(gm.userToConn, userID)
-        }
-        delete(gm.connToUser, conn)
-    }
-
-	delete(gm.users, conn)
-
-	if gm.pendingUser == conn {
-		gm.pendingUser = nil
-		log.Printf("Pending user disconnected")
+	session, ok := gm.sessions[userID]
+	if !ok {
+		return
 	}
+	session.Conn = nil
+	session.Disconnected = true
+	session.LastSeen = time.Now()
 
-	if game, exists := gm.playerGames[conn]; exists {
-		game.HandleDisconnect(conn)
+	if session.GameID != "" {
+		game := gm.games[session.GameID]
+		if game != nil {
+			game.HandleDisconnect(session.UserID, gm)
 
-		delete(gm.playerGames, conn)
-
-		if conn == game.white && game.black != nil {
-			delete(gm.playerGames, game.black)
-		} else if conn == game.black && game.white != nil {
-			delete(gm.playerGames, game.white)
-		}
-
-		if !game.IsActive() {
-			delete(gm.games, game.ID)
+			game.mu.RLock()
+            if game.status == GameStatusAbandoned {
+                delete(gm.games, session.GameID)
+            }
+            game.mu.RUnlock()
 		}
 	}
+
+	log.Printf("User %s disconnected", userID)
 }
 
-func (gm *GameManager) AddHandler(conn *websocket.Conn) {
+func (gm *GameManager) AddHandler(session *PlayerSession) {
+	defer func() {
+		if session.Conn != nil {
+			session.Conn.Close()
+		}
+		gm.RemoveUser(session.UserID)
+	}()
+
 	for {
-		_, rawMsg, err := conn.ReadMessage()
+		if session.Conn == nil {
+			return
+		}
+
+		_, rawMsg, err := session.Conn.ReadMessage()
 		if err != nil {
 			log.Printf("Read error: %v", err)
 			break
@@ -122,84 +115,87 @@ func (gm *GameManager) AddHandler(conn *websocket.Conn) {
 
 		var message IncomingMessage
 		if err := json.Unmarshal(rawMsg, &message); err != nil {
-			conn.WriteJSON(OutgoingError{Type: ERROR, Message: "invalid message format"})
+			session.Conn.WriteJSON(OutgoingError{Type: ERROR, Message: "invalid message format"})
 			continue
 		}
 
-		gm.handleMessage(conn, message)
+		gm.handleMessage(session, message)
 	}
 }
 
-func (gm *GameManager) handleMessage(conn *websocket.Conn, message IncomingMessage) {
+func (gm *GameManager) handleMessage(session *PlayerSession, message IncomingMessage) {
 	switch message.Type {
 	case INIT_GAME:
-		gm.handleInitGame(conn)
+		gm.handleInitGame(session)
 	case MOVE:
-		gm.handleMove(conn, message.Move)
+		gm.handleMove(session, message.Move)
 	default:
-		conn.WriteJSON(OutgoingError{Type: ERROR, Message: "unknown message type"})
+		session.Conn.WriteJSON(OutgoingError{Type: ERROR, Message: "unknown message type"})
 	}
 }
 
-func (gm *GameManager) handleInitGame(conn *websocket.Conn) {
+func (gm *GameManager) handleInitGame(session *PlayerSession) {
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
 
-	if existingGame, exists := gm.playerGames[conn]; exists {
+	if existingGame, exists := gm.games[session.GameID]; exists {
 		if existingGame.IsActive() {
-			conn.WriteJSON(OutgoingError{
+			session.Conn.WriteJSON(OutgoingError{
 				Type:    ERROR,
 				Message: "you are already in an active game",
 			})
 			return
+		} else {
+			delete(gm.games, session.GameID)
+			session.GameID = ""
 		}
-
-		delete(gm.playerGames, conn)
 	}
 
-	if gm.pendingUser == conn {
-		conn.WriteJSON(OutgoingError{
+	if gm.pendingUser == session.UserID {
+		session.Conn.WriteJSON(OutgoingError{
 			Type:    ERROR,
 			Message: "already waiting for opponent",
 		})
 		return
 	}
 
-	if gm.pendingUser != nil {
-		if _, exists := gm.users[gm.pendingUser]; !exists {
-			gm.pendingUser = nil
+	if gm.pendingUser != "" {
+		if _, exists := gm.sessions[gm.pendingUser]; !exists {
+			gm.pendingUser = ""
 		}
 	}
 
-	currentUserID := gm.connToUser[conn]
+	currentUserID := session.UserID
 
-	if gm.pendingUser != nil {
-		pendingUserID := gm.connToUser[gm.pendingUser]
+	if gm.pendingUser != "" {
+		pendingUserID := gm.pendingUser
 
 		// Prevent same user from playing against themselves
 		if currentUserID != "" && pendingUserID != "" && currentUserID == pendingUserID {
-			conn.WriteJSON(OutgoingError{
+			session.Conn.WriteJSON(OutgoingError{
 				Type:    ERROR,
 				Message: "you cannot play against yourself",
 			})
 			return
 		}
 
-		opponent := gm.pendingUser
-		gm.pendingUser = nil
+		gm.pendingUser = ""
 
-		whiteUserID := gm.connToUser[opponent]
-		blackUserID := gm.connToUser[conn]
+		whiteUserID := pendingUserID
+		blackUserID := currentUserID
 
-		game := StartNewGame(opponent, conn, whiteUserID, blackUserID)
+		game := StartNewGame(whiteUserID, blackUserID)
+		session.GameID = game.ID
+		gm.sessions[pendingUserID].GameID = game.ID
 		gm.games[game.ID] = game
-		gm.playerGames[opponent] = game
-		gm.playerGames[conn] = game
+		
+		gm.sessions[whiteUserID].Conn.WriteJSON(map[string]string{"type": "game_start", "color": "white", "game_id": game.ID})
+		gm.sessions[blackUserID].Conn.WriteJSON(map[string]string{"type": "game_start", "color": "black", "game_id": game.ID})
 
 		log.Printf("Game started: %s (white: %s, black: %s)", game.ID, whiteUserID, blackUserID)
 	} else {
-		gm.pendingUser = conn
-		conn.WriteJSON(map[string]string{
+		gm.pendingUser = session.UserID
+		session.Conn.WriteJSON(map[string]string{
 			"type":    "waiting",
 			"message": "waiting for opponent",
 		})
@@ -207,21 +203,26 @@ func (gm *GameManager) handleInitGame(conn *websocket.Conn) {
 	}
 }
 
-func (gm *GameManager) handleMove(conn *websocket.Conn, move string) {
+func (gm *GameManager) handleMove(session *PlayerSession, move string) {
 	gm.mu.RLock()
-	game, exists := gm.playerGames[conn]
+	game, exists := gm.games[session.GameID]
 	gm.mu.RUnlock()
 
 	if !exists || game == nil {
-		conn.WriteJSON(OutgoingError{
+		session.Conn.WriteJSON(OutgoingError{
 			Type:    ERROR,
 			Message: "you are not in a game",
 		})
 		return
 	}
 
-	if err := game.MakeMove(conn, move); err != nil {
-		conn.WriteJSON(OutgoingError{
+	if session.GameID == "" {
+		session.Conn.WriteJSON(OutgoingError{Type: ERROR, Message: "no active game"})
+		return
+	}
+
+	if err := game.MakeMove(session, move, gm); err != nil {
+		session.Conn.WriteJSON(OutgoingError{
 			Type:    ERROR,
 			Message: err.Error(),
 		})
@@ -244,6 +245,6 @@ func (gm *GameManager) GetActiveGamesCount() int {
 func (gm *GameManager) GetConnectedUsersCount() int {
 	gm.mu.RLock()
 	defer gm.mu.RUnlock()
-	return len(gm.users)
+	return len(gm.sessions)
 }
 

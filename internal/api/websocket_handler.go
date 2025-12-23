@@ -58,10 +58,5 @@ func (h *WebSocketHandler) WsHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    go func(conn *websocket.Conn, userID string) {
-        defer conn.Close()
-        defer h.gamemanager.RemoveUser(conn)
-        
-        h.gamemanager.AddUser(conn, userID)
-    }(conn, userID)
+    h.gamemanager.AddUser(conn, userID)
 }
