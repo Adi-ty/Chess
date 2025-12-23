@@ -10,6 +10,8 @@ import (
 
 	"github.com/Adi-ty/chess/internal/store"
 	"github.com/gorilla/websocket"
+	"github.com/notnil/chess"
+	"github.com/redis/go-redis/v9"
 )
 
 type GameManager struct {
@@ -19,15 +21,17 @@ type GameManager struct {
 	pendingUser string
 
 	gameStore  store.GameStore
+	redisClient *redis.Client
 
 	mu          sync.RWMutex
 }
 
-func NewGameManager(gameStore store.GameStore) *GameManager {
+func NewGameManager(gameStore store.GameStore, redisClient *redis.Client) *GameManager {
 	return &GameManager{
 		games:       make(map[string]*Game),
 		sessions:    make(map[string]*PlayerSession),
 		gameStore:   gameStore,
+		redisClient: redisClient,
 	}
 }
 
@@ -63,6 +67,45 @@ func (gm *GameManager) AddUser(conn *websocket.Conn, userID string) {
 	session.LastSeen = time.Now()
 
 	if session.GameID != "" {
+		dbGame, err := gm.gameStore.GetGameByUserID(context.Background(), userID)
+		if err != nil {
+			log.Printf("Failed to fetch game from store: %v", err)
+		} else if dbGame != nil {
+			game := &Game{
+                ID:          dbGame.ID,
+                WhiteUserID: dbGame.WhiteUserID,
+                BlackUserID: dbGame.BlackUserID,
+                board:       chess.NewGame(),
+                status:      GameStatusInProgress,
+                startTime:   time.Now(),
+                moveNumber:  0,
+                disconnected: make(map[string]time.Time),
+            }
+			gm.games[dbGame.ID] = game
+			session.GameID = dbGame.ID
+
+			// Replay moves
+			moves, err := gm.gameStore.GetMovesByGameID(context.Background(), dbGame.ID)
+			if len (moves) > 0 {
+				gm.sessions[game.WhiteUserID].GameID = game.ID
+				gm.sessions[game.BlackUserID].GameID = game.ID
+				gm.sessions[game.WhiteUserID].Conn.WriteJSON(map[string]interface{}{"type": "board_replay", "moves": moves})
+				gm.sessions[game.BlackUserID].Conn.WriteJSON(map[string]interface{}{"type": "board_replay", "moves": moves})
+			}
+			if err != nil {
+                log.Printf("Error fetching moves for game %s: %v", dbGame.ID, err)
+            } else {
+                for _, move := range moves {
+                    if err := game.board.MoveStr(move.Move); err != nil {
+                        log.Printf("Error replaying move %s: %v", move.Move, err)
+						session.Conn.WriteJSON(OutgoingError{Type: ERROR, Message: "failed to restore game"})
+						return
+                    }
+                    game.moveNumber = move.MoveNumber
+                }
+            }
+		}
+
 		if game, exists := gm.games[session.GameID]; !exists || !game.IsActive() {
 			session.GameID = ""
 		}

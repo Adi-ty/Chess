@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adi-ty/chess/internal/queue"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/notnil/chess"
@@ -37,6 +38,8 @@ type Game struct {
 	board     *chess.Game
 	status    GameStatus
 
+	moveNumber int
+
 	startTime time.Time
 	endTime   time.Time
 
@@ -52,6 +55,7 @@ func StartNewGame(whiteUserID, blackUserID string) *Game {
 		BlackUserID: blackUserID,
 		board:     chess.NewGame(),
 		status:    GameStatusInProgress,
+		moveNumber: 0,
 		startTime: time.Now(),
 		disconnected: make(map[string]time.Time),
 	}
@@ -107,6 +111,18 @@ func (g *Game) MakeMove(session *PlayerSession, move string, gm *GameManager) er
 		g.safeSend(gm.sessions[g.BlackUserID].Conn, gameOverMsg)
 		return nil
 	}
+
+	g.moveNumber++
+    payload := queue.MovePayload{
+        GameID:     g.ID,
+        UserID:     session.UserID,
+        MoveNumber: g.moveNumber,
+        Move:       move,
+        CreatedAt:  float64(time.Now().Unix()),
+    }
+    if err := queue.EnqueueMove(gm.redisClient, payload); err != nil {
+        log.Printf("Failed to enqueue move: %v", err)
+    }
 
 	moveMsg := OutgoingMove{Type: MOVE, Move: move}
 	g.safeSend(gm.sessions[g.WhiteUserID].Conn, moveMsg)

@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+
+	"github.com/Adi-ty/chess/internal/queue"
 )
 
 type Game struct {
@@ -18,8 +20,10 @@ type Game struct {
 
 type GameStore interface {
 	CreateGame(ctx context.Context, game *Game) (*Game, error)
-	// GetGameByUserID(ctx context.Context, id string) (*Game, error)
+	GetGameByUserID(ctx context.Context, id string) (*Game, error)
 	UpdateGameStatus(ctx context.Context, id string, status string, outcome string, method string, endedAt string) error
+	InsertMove(ctx context.Context, payload queue.MovePayload) error
+	GetMovesByGameID(ctx context.Context, gameID string) ([]queue.MovePayload, error)
 }
 
 type PostgresGameStore struct {
@@ -55,28 +59,28 @@ func (s *PostgresGameStore) CreateGame(ctx context.Context, game *Game) (*Game, 
 	return &g, nil
 }
 
-// func (s *PostgresGameStore) GetGameByUserID(ctx context.Context, id string) (*Game, error) {
-// 	var g Game
+func (s *PostgresGameStore) GetGameByUserID(ctx context.Context, id string) (*Game, error) {
+	var g Game
 
-// 	query := `
-//         SELECT id, white_user_id, black_user_id, status, started_at, ended_at
-//         FROM games
-//         WHERE (white_user_id = $1 OR black_user_id = $1) AND status = 'in_progress'
-//         ORDER BY started_at DESC
-//         LIMIT 1
-//     `
+	query := `
+        SELECT id, white_user_id, black_user_id, status, started_at, ended_at
+        FROM games
+        WHERE (white_user_id = $1 OR black_user_id = $1) AND status = 'in_progress'
+        ORDER BY started_at DESC
+        LIMIT 1
+    `
 
-// 	row := s.db.QueryRowContext(ctx, query, id)
-// 	err := row.Scan(&g.ID, &g.WhiteUserID, &g.BlackUserID, &g.Status, &g.StartedAt, &g.EndedAt)
-// 	if err != nil {
-// 		if err == sql.ErrNoRows {
-// 			return nil, nil
-// 		}
-// 		return nil, err
-// 	}
+	row := s.db.QueryRowContext(ctx, query, id)
+	err := row.Scan(&g.ID, &g.WhiteUserID, &g.BlackUserID, &g.Status, &g.StartedAt, &g.EndedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
 
-// 	return &g, nil
-// }
+	return &g, nil
+}
 
 func (s *PostgresGameStore) UpdateGameStatus(ctx context.Context, id string, status string, outcome string, method string, endedAt string) error {
 	query := `
@@ -87,5 +91,35 @@ func (s *PostgresGameStore) UpdateGameStatus(ctx context.Context, id string, sta
 
 	_, err := s.db.ExecContext(ctx, query, status, outcome, method, endedAt, id)
 
+	return err
+}
+
+func (s *PostgresGameStore) GetMovesByGameID(ctx context.Context, gameID string) ([]queue.MovePayload, error) {
+	var moves []queue.MovePayload
+
+	query := `SELECT game_id, user_id, move_number, move, extract(epoch from created_at) FROM moves WHERE game_id = $1 ORDER BY move_number`
+
+	rows, err := s.db.QueryContext(ctx, query, gameID)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var m queue.MovePayload
+        if err := rows.Scan(&m.GameID, &m.UserID, &m.MoveNumber, &m.Move, &m.CreatedAt); err != nil {
+            return nil, err
+        }
+        moves = append(moves, m)
+    }
+    return moves, nil
+}
+
+func (s *PostgresGameStore) InsertMove(ctx context.Context, payload queue.MovePayload) error {
+	query := `
+		INSERT INTO moves (game_id, user_id, move_number, move, created_at)
+		VALUES ($1, $2, $3, $4, to_timestamp($5))
+	`
+	_, err := s.db.ExecContext(ctx, query, payload.GameID, payload.UserID, payload.MoveNumber, payload.Move, payload.CreatedAt)
 	return err
 }

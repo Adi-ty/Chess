@@ -10,7 +10,9 @@ import (
 	"github.com/Adi-ty/chess/internal/config"
 	"github.com/Adi-ty/chess/internal/gamemanager"
 	"github.com/Adi-ty/chess/internal/store"
+	"github.com/Adi-ty/chess/internal/worker"
 	"github.com/Adi-ty/chess/migrations"
+	"github.com/redis/go-redis/v9"
 )
 
 type Application struct {
@@ -20,6 +22,8 @@ type Application struct {
 	WebSocketHandler *api.WebSocketHandler
 	JWTService       *auth.JWTService
 	DB *sql.DB
+	redisClient *redis.Client
+	worker *worker.Worker
 }
 
 func NewApplication() (*Application, error) {
@@ -28,6 +32,10 @@ func NewApplication() (*Application, error) {
 		return nil, err
 	}
 
+	redisDB, err := store.OpenRedis()
+	if err != nil {
+		return nil, err
+	}
 	
 	err = store.MigrateFS(pgDB, migrations.FS, ".")
 	if err != nil {
@@ -43,7 +51,7 @@ func NewApplication() (*Application, error) {
 	gameStore := store.NewPostgresGameStore(pgDB)
 
 	// Services
-	gm := gamemanager.NewGameManager(gameStore)
+	gm := gamemanager.NewGameManager(gameStore, redisDB)
 
 	jwtService := auth.NewJWTService(cfg.JWTSecret)
 	googleOauth := auth.NewGoogleOAuth(&auth.GoogleConfig{
@@ -56,6 +64,10 @@ func NewApplication() (*Application, error) {
 	authHandler := api.NewAuthHandler(logger, googleOauth, jwtService, userStore)
 	websocketHandler := api.NewWebSocketHandler(logger, gm, jwtService)
 
+	// Start worker go-routine
+	wk := worker.NewWorker(redisDB, gameStore)
+	go wk.Start()
+
 	app := &Application{
 		Logger: logger,
 		Config: cfg,
@@ -63,6 +75,8 @@ func NewApplication() (*Application, error) {
 		WebSocketHandler: websocketHandler,
 		JWTService: jwtService,
 		DB: pgDB,
+		redisClient: redisDB,
+		worker: wk,
 	}
 
 	return app, nil
