@@ -40,9 +40,10 @@ func NewApplication() (*Application, error) {
 
 	// Stores
 	userStore := store.NewPostgresUserStore(pgDB)
+	gameStore := store.NewPostgresGameStore(pgDB)
 
 	// Services
-	gm := gamemanager.NewGameManager()
+	gm := gamemanager.NewGameManager(gameStore)
 
 	jwtService := auth.NewJWTService(cfg.JWTSecret)
 	googleOauth := auth.NewGoogleOAuth(&auth.GoogleConfig{

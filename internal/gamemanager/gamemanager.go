@@ -1,12 +1,14 @@
 package gamemanager
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"sync"
 	"time"
 
+	"github.com/Adi-ty/chess/internal/store"
 	"github.com/gorilla/websocket"
 )
 
@@ -16,13 +18,16 @@ type GameManager struct {
 
 	pendingUser string
 
+	gameStore  store.GameStore
+
 	mu          sync.RWMutex
 }
 
-func NewGameManager() *GameManager {
+func NewGameManager(gameStore store.GameStore) *GameManager {
 	return &GameManager{
 		games:       make(map[string]*Game),
 		sessions:    make(map[string]*PlayerSession),
+		gameStore:   gameStore,
 	}
 }
 
@@ -185,9 +190,20 @@ func (gm *GameManager) handleInitGame(session *PlayerSession) {
 		blackUserID := currentUserID
 
 		game := StartNewGame(whiteUserID, blackUserID)
-		session.GameID = game.ID
-		gm.sessions[pendingUserID].GameID = game.ID
 		gm.games[game.ID] = game
+		gm.sessions[whiteUserID].GameID = game.ID
+		gm.sessions[blackUserID].GameID = game.ID
+
+		_, err := gm.gameStore.CreateGame(context.Background(), &store.Game{
+			ID:          game.ID,
+			WhiteUserID: whiteUserID,
+			BlackUserID: blackUserID,
+			Status:      string(GameStatusInProgress),
+			StartedAt:   game.startTime.Format(time.RFC3339),
+		})
+		if err != nil {
+			log.Printf("Failed to create game in store: %v", err)
+		}
 		
 		gm.sessions[whiteUserID].Conn.WriteJSON(map[string]string{"type": "game_start", "color": "white", "game_id": game.ID})
 		gm.sessions[blackUserID].Conn.WriteJSON(map[string]string{"type": "game_start", "color": "black", "game_id": game.ID})

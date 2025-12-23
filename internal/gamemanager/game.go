@@ -1,7 +1,9 @@
 package gamemanager
 
 import (
+	"context"
 	"errors"
+	"log"
 	"sync"
 	"time"
 
@@ -90,6 +92,11 @@ func (g *Game) MakeMove(session *PlayerSession, move string, gm *GameManager) er
 		g.status = GameStatusCompleted
 		g.endTime = time.Now()
 
+		err := gm.gameStore.UpdateGameStatus(context.Background(), g.ID, string(GameStatusCompleted), outcome.String(), g.board.Method().String(), g.endTime.Format(time.RFC3339))
+		if err != nil {
+			log.Printf("Failed to update game status in store: %v", err)
+		}
+
 		gameOverMsg := OutgoingGameOver{
 			Type:    GAME_OVER,
 			Outcome: outcome.String(),
@@ -135,6 +142,11 @@ func (g *Game) HandleDisconnect(userID string, gm *GameManager) {
 		if g.status == GameStatusInProgress {
 			g.status = GameStatusAbandoned
 			g.endTime = time.Now()
+
+			err := gm.gameStore.UpdateGameStatus(context.Background(), g.ID, string(g.status), string(GameStatusAbandoned), "disconnect", g.endTime.Format(time.RFC3339))
+			if err != nil {
+				log.Printf("Failed to update game status in store: %v", err)
+			}
 
 			abandonMsg := OutgoingGameOver{
 				Type:    GAME_OVER,
