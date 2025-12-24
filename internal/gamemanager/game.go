@@ -2,6 +2,7 @@ package gamemanager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"sync"
@@ -125,8 +126,10 @@ func (g *Game) MakeMove(session *PlayerSession, move string, gm *GameManager) er
     }
 
 	moveMsg := OutgoingMove{Type: MOVE, Move: move}
-	g.safeSend(gm.sessions[g.WhiteUserID].Conn, moveMsg)
-	g.safeSend(gm.sessions[g.BlackUserID].Conn, moveMsg)
+	jsonData, _ := json.Marshal(moveMsg)
+    gm.redisClient.Publish(context.Background(), "game:"+g.ID, jsonData)
+	// g.safeSend(gm.sessions[g.WhiteUserID].Conn, moveMsg)
+	// g.safeSend(gm.sessions[g.BlackUserID].Conn, moveMsg)
 
 	return nil
 }

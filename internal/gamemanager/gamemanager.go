@@ -23,6 +23,8 @@ type GameManager struct {
 	gameStore  store.GameStore
 	redisClient *redis.Client
 
+	pubsubs map[string]*redis.PubSub
+
 	mu          sync.RWMutex
 }
 
@@ -32,6 +34,7 @@ func NewGameManager(gameStore store.GameStore, redisClient *redis.Client) *GameM
 		sessions:    make(map[string]*PlayerSession),
 		gameStore:   gameStore,
 		redisClient: redisClient,
+		pubsubs:     make(map[string]*redis.PubSub),
 	}
 }
 
@@ -111,6 +114,14 @@ func (gm *GameManager) AddUser(conn *websocket.Conn, userID string) {
                     blackSess.Conn.WriteJSON(map[string]interface{}{"type": "board_replay", "moves": moves})
                 }
 
+			
+				if _, exists := gm.pubsubs[dbGame.ID]; !exists {
+					pubsub := gm.redisClient.Subscribe(context.Background(), "game:"+dbGame.ID)
+					gm.pubsubs[dbGame.ID] = pubsub
+					go gm.listenForMoves(dbGame.ID)
+					log.Printf("Subscribed to game channel: %s", dbGame.ID)
+				}
+
                 for _, move := range moves {
 					mv, err := chess.UCINotation{}.Decode(game.board.Position(), move.Move)
 					if err != nil {
@@ -156,7 +167,10 @@ func (gm *GameManager) RemoveUser(userID string) {
 
 			game.mu.RLock()
             if game.status == GameStatusAbandoned {
-                delete(gm.games, session.GameID)
+                if pubsub, exists := gm.pubsubs[session.GameID]; exists {
+                    pubsub.Close()
+                    delete(gm.pubsubs, session.GameID)
+                }
             }
             game.mu.RUnlock()
 		}
@@ -260,6 +274,11 @@ func (gm *GameManager) handleInitGame(session *PlayerSession) {
 		gm.sessions[whiteUserID].GameID = game.ID
 		gm.sessions[blackUserID].GameID = game.ID
 
+		pubsub := gm.redisClient.Subscribe(context.Background(), "game:"+game.ID)
+		gm.pubsubs[game.ID] = pubsub
+
+		go gm.listenForMoves(game.ID)
+
 		_, err := gm.gameStore.CreateGame(context.Background(), &store.Game{
 			ID:          game.ID,
 			WhiteUserID: whiteUserID,
@@ -330,3 +349,24 @@ func (gm *GameManager) GetConnectedUsersCount() int {
 	return len(gm.sessions)
 }
 
+func (gm *GameManager) listenForMoves(gameID string) {
+    pubsub := gm.pubsubs[gameID]
+    defer pubsub.Close()
+
+    ch := pubsub.Channel()
+    for msg := range ch {
+        var moveMsg OutgoingMove
+        if err := json.Unmarshal([]byte(msg.Payload), &moveMsg); err != nil {
+            log.Printf("Error unmarshaling pubsub message: %v", err)
+            continue
+        }
+
+        game := gm.games[gameID]
+        if game != nil {
+            game.mu.RLock()
+            game.safeSend(gm.sessions[game.WhiteUserID].Conn, moveMsg)
+            game.safeSend(gm.sessions[game.BlackUserID].Conn, moveMsg)
+            game.mu.RUnlock()
+        }
+    }
+}
